@@ -2,159 +2,188 @@ import aiohttp
 import asyncio
 import json
 from datetime import datetime, timedelta
-import sqlite3
+
 import pytz
+from database import add_tracker, get_all_trackers, init_db, is_event_processed, remove_processed_events, remove_tracker, store_event
+import discord
+from discord.ext import commands, tasks
+from discord.utils import get
 
 # Use BeautifulSoup to parse HTML and extract event IDs
 from bs4 import BeautifulSoup
 
+from util import send_discord_message
+
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 # Use the official API endpoint
 URL = 'https://www.eventbrite.ca/d/ca--los-angeles/all-events/'
 
-# Initialize database
-def init_db():
-    conn = sqlite3.connect('events.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS processed_events
-                 (event_id TEXT PRIMARY KEY, processed_date TIMESTAMP)''')
-    conn.commit()
-    conn.close()
+# Bot setup
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Check if event was already processed
-def is_event_processed(event_id):
-    conn = sqlite3.connect('events.db')
-    c = conn.cursor()
-    c.execute('SELECT 1 FROM processed_events WHERE event_id = ?', (event_id,))
-    result = c.fetchone() is not None
-    conn.close()
-    return result
 
-# Store processed event
-def store_event_id(event_id):
-    conn = sqlite3.connect('events.db')
-    c = conn.cursor()
-    # Convert datetime to ISO format string
-    current_time = datetime.now().isoformat()
-    c.execute('INSERT INTO processed_events (event_id, processed_date) VALUES (?, ?)',
-              (event_id, current_time))
-    conn.commit()
-    conn.close()
-
-async def send_webhook_with_retry(session, webhook_data, max_retries=5, initial_delay=1):
-    webhook_url = 'https://discord.com/api/webhooks/1322003111497170975/NZoxEX5_k-2hbBsSq0uAiFZWMylZhCAJhkEF-RlXZb3S_c9uMG1bvf9WQly5fYFeHy-U'
-    delay = initial_delay
+# Modify fetch_events to work with channels
+async def fetch_events_for_url(session, url, channel_id):
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        print(f"Could not find channel {channel_id}")
+        return
     
-    for _ in range(max_retries):
-        try:
-            async with session.post(webhook_url, json=webhook_data) as webhook_response:
-                if webhook_response.status == 204:  # Discord returns 204 on success
-                    return True
-                elif webhook_response.status == 429:  # Rate limit error
-                    retry_after_data = await webhook_response.json()
-                    wait_time = retry_after_data.get('retry_after', delay)
-                    print(f"Rate limited. Server retry_after: {retry_after_data}")
-                    print(f"Waiting {wait_time} seconds...")
-                    await asyncio.sleep(float(wait_time))
-                    delay *= 2  # Exponential backoff
+    event_ids = []
+
+    async with session.get(url) as response:
+        if response.status == 200:
+            html_content = await response.text()
+            soup = BeautifulSoup(html_content, 'html.parser')
+
+            event_links = soup.select('a.event-card-link')
+
+            for link in event_links:
+                event_id = link.get('data-event-id')
+                if event_id is not None and event_id not in event_ids:
+                    event_ids.append(event_id)
+        else:
+            print(f"Failed to fetch events for {url}: {response.status}")
+    
+    event_ids_param = ','.join(event_ids)
+    page_size = len(event_ids)
+
+    print('Event IDs:', event_ids)
+    print('Number of Event IDs:', len(event_ids))
+    
+    # Build API URL with query parameters
+    api_url = 'https://www.eventbrite.ca/api/v3/destination/events'
+    params = {
+        'event_ids': event_ids_param,
+        'page_size': page_size,
+        'expand': 'event_sales_status,image,primary_venue,saves,ticket_availability,primary_organizer,public_collection'
+    }
+    
+    async with session.get(api_url, params=params) as response:
+        if response.status == 200:
+            data = await response.json()
+            events = data['events']
+
+            for event in events:
+                if is_event_processed(event['id'], channel_id):
+                    print(f"Event {event['id']} already processed")
+                    continue
+                
+                print(f"Processing event {event['id']}")
+                timezone = pytz.timezone(event['timezone'])
+                start_date_str = f"{event['start_date']} {event['start_time']}"
+                start_datetime = timezone.localize(datetime.strptime(start_date_str, "%Y-%m-%d %H:%M"))
+                event['start_date'] = start_datetime.isoformat()
+                
+                end_date_str = f"{event['end_date']} {event['end_time']}"
+                end_datetime = timezone.localize(datetime.strptime(end_date_str, "%Y-%m-%d %H:%M"))
+                event['end_date'] = end_datetime.isoformat()
+
+                current_time = timezone.localize(datetime.now())
+
+                if start_datetime > current_time:
+                    await send_discord_message(channel, event)
+                    store_event(event['id'], channel_id)
                 else:
-                    print(f"Failed to send webhook: {webhook_response.status}")
-                    await asyncio.sleep(delay)
-                    delay *= 2
-        except Exception as e:
-            print(f"Error sending webhook: {e}")
-            await asyncio.sleep(delay)
-            delay *= 2
+                    print(f"Event {event['id']} is in the past")
+        else:
+            print(f"Failed to fetch events for {api_url}: {response.status}")
+
+
+@tasks.loop(minutes=30)
+async def check_events():
+    async with aiohttp.ClientSession() as session:
+        trackers = get_all_trackers()
+        for url, channel_id in trackers:
+            await fetch_events_for_url(session, url, channel_id)
+
+# Bot commands
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def track(ctx, url: str, channel: discord.TextChannel = None):
+    """
+    Add a new Eventbrite URL to track
+    Usage: !track <url> [#channel]
+    """
+    if not url.startswith('https://www.eventbrite'):
+        await ctx.send("Please provide a valid Eventbrite URL")
+        return
     
-    return False
-
-def create_webhook_data(event):
-    # Parse start and end dates into datetime objects
-    start = datetime.fromisoformat(event['start_date'].replace('Z', '+00:00'))
-    end = datetime.fromisoformat(event['end_date'].replace('Z', '+00:00'))
+    # Use mentioned channel or current channel
+    target_channel = channel or ctx.channel
     
-    # Format dates in readable format
-    start_str = start.strftime("%A, %b %d %Y %I:%M %p")
-    end_str = end.strftime("%A, %b %d %Y %I:%M %p")
+    add_tracker(url, target_channel.id)
+    await ctx.send(f"Now tracking events from: {url} in {target_channel.mention}")
     
-    embed = {
-        "title": event['name'],
-        "url": event['url'],
-        "description": event['summary'],
-        "color": 0x00ff00,  # Green color
-        "footer": {
-            "text": f"Event time: {start_str} - {end_str}"
-        }
-    }
+    # Immediately fetch events for the new URL
+    async with aiohttp.ClientSession() as session:
+        await fetch_events_for_url(session, url, target_channel.id)
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def untrack(ctx, url: str, channel: discord.TextChannel = None):
+    """
+    Stop tracking an Eventbrite URL
+    Usage: !untrack <url> [#channel]
+    """
+    target_channel = channel or ctx.channel
+    remove_tracker(url, target_channel.id)
+    # Remove processed events for this channel
+    remove_processed_events(target_channel.id)
+    await ctx.send(f"Stopped tracking: {url} in {target_channel.mention}")
+
+@bot.command()
+async def list_tracking(ctx, channel: discord.TextChannel = None):
+    """
+    List all tracked URLs in a channel
+    Usage: !list_tracking [#channel]
+    """
+    trackers = get_all_trackers()
     
-    # Add image if available
-    if 'image' in event and event['image']['url']:
-        embed["image"] = {"url": event['image']['url']}
-    
-    return {
-        "content": f"Hey @everyone! New post from [Eventbrite]({URL})! Go check it out!",
-        "embeds": [embed]
-    }
+    if channel is not None:
+        # Filter for specific channel if provided
+        channel_trackers = [url for url, channel_id in trackers if channel_id == channel.id]
+        if channel_trackers:
+            await ctx.send(f"URLs tracked in {channel.mention}:\n" + "\n".join(channel_trackers))
+        else:
+            await ctx.send(f"No URLs are being tracked in {channel.mention}")
+    else:
+        # Show all channels
+        tracking_by_channel = {}
+        for url, channel_id in trackers:
+            if channel_id not in tracking_by_channel:
+                tracking_by_channel[channel_id] = []
+            tracking_by_channel[channel_id].append(url)
+        
+        if tracking_by_channel:
+            response = "Currently tracked URLs by channel:\n"
+            for channel_id, urls in tracking_by_channel.items():
+                channel = bot.get_channel(channel_id)
+                if channel:
+                    response += f"\n{channel.mention}:\n" + "\n".join(f"- {url}" for url in urls) + "\n"
+            await ctx.send(response)
+        else:
+            await ctx.send("No URLs are currently being tracked in any channel.")
 
-async def fetch_events():
-    # Create a ClientSession that persists cookies across requests
-    async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar()) as session:
-        # First request
-        async with session.get(URL) as response:
-            if response.status == 200:
-                # Get the HTML content
-                html_content = await response.text()
-                headers = {}
-                
-                soup = BeautifulSoup(html_content, 'html.parser')
-                
-                # Find all event card links and extract unique event IDs
-                event_links = soup.select('a.event-card-link')
-                event_ids = [link.get('data-event-id') for link in event_links if link.get('data-event-id')]
-                event_ids = list(set(event_ids))
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user.name}')
+    check_events.start()
 
-                # Join event IDs with commas for the API query
-                event_ids_param = ','.join(event_ids)
-                print('Event IDs:', event_ids)
-                print('Number of Event IDs:', len(event_ids))
-
-                # Make API request to get event details
-                api_url = f'https://www.eventbrite.ca/api/v3/destination/events/?event_ids={event_ids_param}&page_size=20&expand=event_sales_status,image,primary_venue,saves,ticket_availability,primary_organizer,public_collection'
-                async with session.get(api_url, headers=headers) as api_response:
-                    if api_response.status == 200:
-                        event_data = await api_response.json()
-                        # Make timezone-aware datetime objects
-                        utc = pytz.UTC
-                        current_time = datetime.now(utc)
-                        
-                        for event in event_data['events']:
-                            # Skip if event was already processed
-                            if is_event_processed(event['id']):
-                                print(f"Event {event['id']} has already been processed")
-                                continue
-
-                            print(f'Processing event {event["id"]}')
-                                
-                            # Parse start date and explicitly make it timezone-aware
-                            start_date = datetime.fromisoformat(event['start_date'].replace('Z', '+00:00')).replace(tzinfo=utc)
-                            
-                            if start_date > current_time:
-                                # Create and send webhook
-                                webhook_data = create_webhook_data(event)
-                                
-                                if await send_webhook_with_retry(session, webhook_data):
-                                    # Store processed event
-                                    store_event_id(event['id'])
-                                else:
-                                    print(f"Failed to send webhook for event {event['id']} after all retries")
-                            else:
-                                print(f"Event {event['id']} has already started or passed")
-                                print(f"Start date: {start_date}")
-                    else:
-                        print(f"API request failed with status code: {api_response.status}")
-                
-            else:
-                print(f"Request failed with status code: {response.status}")
-
-# Initialize database and run
+# Initialize and run
 init_db()
-asyncio.run(fetch_events())
+bot.run(os.getenv('BOT_TOKEN'))  # Get token from .env file
+
+# Add error handling for permissions
+@track.error
+@untrack.error
+async def permission_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("You need 'Manage Channels' permission to use this command.")
