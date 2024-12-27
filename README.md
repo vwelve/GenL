@@ -1,22 +1,23 @@
-# Eventbrite to Discord Event Notifier
+# Eventbrite to Discord Event Bot
 
-This project automatically fetches events from Eventbrite and posts them to a Discord channel via webhooks. It monitors Eventbrite's Los Angeles events page and sends notifications for new upcoming events.
+This project uses a Discord bot to automatically fetch events from Eventbrite and post them to Discord channels. It allows tracking multiple Eventbrite URLs and posting to different channels.
 
 ## Features
 
-- Scrapes Eventbrite Los Angeles events page
-- Posts event details to Discord including:
+- Track multiple Eventbrite event pages simultaneously
+- Post event details to Discord channels including:
   - Event name and description
   - Start and end times
   - Event image (if available)
   - Direct link to event
 - Tracks processed events in SQLite database to avoid duplicates
-- Implements retry logic and rate limiting for Discord webhooks
+- Discord bot commands for managing tracked URLs
+- Support for tracking different URLs in different channels
 
 ## Prerequisites
 
 - Python 3.7+
-- Discord webhook URL
+- Discord Bot Token
 - Required Python packages (see requirements.txt)
 
 ## Installation & Setup
@@ -25,8 +26,8 @@ This project automatically fetches events from Eventbrite and posts them to a Di
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/eventbrite-discord-notifier.git
-   cd eventbrite-discord-notifier
+   git clone https://github.com/vwelve/GenL.git
+   cd GenL
    ```
 
 2. Create and activate a virtual environment:
@@ -45,19 +46,24 @@ This project automatically fetches events from Eventbrite and posts them to a Di
 
 4. Configure the application:
    - Copy `.env.example` to `.env`
-   - Add your Discord webhook URL to `.env`
+   - Add your Discord bot token to `.env`
    - Adjust any other settings as needed
 
 ## Usage
 
-1. Start the application:
+1. Start the bot:
    ```bash
    python main.py
    ```
 
-2. The script will:
-   - Check Eventbrite periodically for new events
-   - Post new events to your Discord channel
+2. Bot Commands:
+   - `!track <url> [#channel]` - Start tracking an Eventbrite URL in specified channel
+   - `!untrack <url> [#channel]` - Stop tracking a URL in specified channel
+   - `!list_tracking [#channel]` - List all tracked URLs (optionally for specific channel)
+
+3. The bot will:
+   - Check tracked Eventbrite URLs every 30 minutes
+   - Post new events to respective Discord channels
    - Store processed events in the local database
 
 ## Production Deployment
@@ -71,21 +77,18 @@ This project automatically fetches events from Eventbrite and posts them to a Di
 
 2. Start the application:
    ```bash
-   pm2 start main.py --name "eventbrite-discord"
+   pm2 start main.py --name "eventbrite-discord-bot"
    pm2 startup
    pm2 save
    ```
 
-The application will now run in the background and restart automatically on system boot.
+The bot will now run in the background and restart automatically on system boot.
 
 ## Configuration
 
 The following environment variables can be set in `.env`:
 
-- `DISCORD_WEBHOOK_URL`: Your Discord channel webhook URL (required)
-- `CHECK_INTERVAL`: Time between Eventbrite checks in minutes (default: 30)
-- `DATABASE_PATH`: Path to SQLite database file (default: events.db)
-- `MAX_EVENTS`: Maximum number of events to process per check (default: 10)
+- `BOT_TOKEN`: Your Discord bot token (required)
 
 ## Contributing
 
