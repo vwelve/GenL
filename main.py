@@ -22,7 +22,6 @@ def init_db():
 
 # Check if event was already processed
 def is_event_processed(event_id):
-    return False
     conn = sqlite3.connect('events.db')
     c = conn.cursor()
     c.execute('SELECT 1 FROM processed_events WHERE event_id = ?', (event_id,))
@@ -32,7 +31,6 @@ def is_event_processed(event_id):
 
 # Store processed event
 def store_event_id(event_id):
-    return
     conn = sqlite3.connect('events.db')
     c = conn.cursor()
     # Convert datetime to ISO format string
