@@ -150,7 +150,7 @@ async def list_tracking(ctx, channel: discord.TextChannel = None):
     
     if channel is not None:
         # Filter for specific channel if provided
-        channel_trackers = [url for url, channel_id in trackers if channel_id == channel.id]
+        channel_trackers = [url for url, channel_id, _ in trackers if channel_id == channel.id]
         if channel_trackers:
             await ctx.send(f"URLs tracked in {channel.mention}:\n" + "\n".join(channel_trackers))
         else:
@@ -158,14 +158,14 @@ async def list_tracking(ctx, channel: discord.TextChannel = None):
     else:
         # Show all channels
         tracking_by_channel = {}
-        for url, channel_id in trackers:
+        for url, channel_id, _ in trackers:
             if channel_id not in tracking_by_channel:
                 tracking_by_channel[channel_id] = []
             tracking_by_channel[channel_id].append(url)
         
         if tracking_by_channel:
             response = "Currently tracked URLs by channel:\n"
-            for channel_id, urls in tracking_by_channel.items():
+            for channel_id, urls, _ in tracking_by_channel.items():
                 channel = bot.get_channel(channel_id)
                 if channel:
                     response += f"\n{channel.mention}:\n" + "\n".join(f"- {url}" for url in urls) + "\n"
