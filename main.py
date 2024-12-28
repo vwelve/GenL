@@ -165,7 +165,7 @@ async def list_tracking(ctx, channel: discord.TextChannel = None):
         
         if tracking_by_channel:
             response = "Currently tracked URLs by channel:\n"
-            for channel_id, urls, _ in tracking_by_channel.items():
+            for channel_id, urls in tracking_by_channel.items():
                 channel = bot.get_channel(channel_id)
                 if channel:
                     response += f"\n{channel.mention}:\n" + "\n".join(f"- {url}" for url in urls) + "\n"
