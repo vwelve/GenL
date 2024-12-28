@@ -1,4 +1,4 @@
 aiohttp==3.9.1
 beautifulsoup4==4.12.2
-pytz==2023.3
+pytz
 discord
