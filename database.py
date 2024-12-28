@@ -7,7 +7,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS processed_events
                  (event_id TEXT PRIMARY KEY, channel_id INTEGER, processed_date TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS event_trackers
-                 (url TEXT, channel_id INTEGER, 
+                 (url TEXT, channel_id INTEGER, custom_message TEXT,
                   UNIQUE(url, channel_id))''')
     conn.commit()
     conn.close()
@@ -29,11 +29,11 @@ def store_event(event_id, channel_id):
     conn.close()
 
 # Add functions to manage URLs
-def add_tracker(url, channel_id):
+def add_tracker(url, channel_id, custom_message=None):
     conn = sqlite3.connect('events.db')
     c = conn.cursor()
-    c.execute('INSERT OR IGNORE INTO event_trackers (url, channel_id) VALUES (?, ?)',
-              (url, channel_id))
+    c.execute('''INSERT INTO event_trackers (url, channel_id, custom_message) 
+                 VALUES (?, ?, ?)''', (url, channel_id, custom_message))
     conn.commit()
     conn.close()
 
@@ -48,7 +48,7 @@ def remove_tracker(url, channel_id):
 def get_all_trackers():
     conn = sqlite3.connect('events.db')
     c = conn.cursor()
-    c.execute('SELECT url, channel_id FROM event_trackers')
+    c.execute('SELECT url, channel_id, custom_message FROM event_trackers')
     trackers = c.fetchall()
     conn.close()
     return trackers
@@ -60,3 +60,12 @@ def remove_processed_events(channel_id):
     c.execute('DELETE FROM processed_events WHERE channel_id = ?', (channel_id,))
     conn.commit()
     conn.close()
+
+def get_tracker_message(url, channel_id):
+    conn = sqlite3.connect('events.db')
+    c = conn.cursor()
+    c.execute('SELECT custom_message FROM event_trackers WHERE url = ? AND channel_id = ?', 
+              (url, channel_id))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else None

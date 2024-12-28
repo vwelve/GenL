@@ -20,9 +20,6 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Use the official API endpoint
-URL = 'https://www.eventbrite.ca/d/ca--los-angeles/all-events/'
-
 # Bot setup
 intents = discord.Intents.default()
 intents.message_content = True
@@ -30,7 +27,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 
 # Modify fetch_events to work with channels
-async def fetch_events_for_url(session, url, channel_id):
+async def fetch_events_for_url(session, url, channel_id, custom_message=None):
     channel = bot.get_channel(channel_id)
     if not channel:
         print(f"Could not find channel {channel_id}")
@@ -89,8 +86,9 @@ async def fetch_events_for_url(session, url, channel_id):
                 current_time = timezone.localize(datetime.now())
 
                 if start_datetime > current_time:
-                    await send_discord_message(channel, event)
+                    await send_discord_message(channel, event, custom_message)
                     store_event(event['id'], channel_id)
+                    await asyncio.sleep(15)
                 else:
                     print(f"Event {event['id']} is in the past")
         else:
@@ -101,26 +99,29 @@ async def fetch_events_for_url(session, url, channel_id):
 async def check_events():
     async with aiohttp.ClientSession() as session:
         trackers = get_all_trackers()
-        for url, channel_id in trackers:
-            await fetch_events_for_url(session, url, channel_id)
+        for url, channel_id, custom_message in trackers:
+            await fetch_events_for_url(session, url, channel_id, custom_message)
 
 # Bot commands
 @bot.command()
 @commands.has_permissions(manage_channels=True)
-async def track(ctx, url: str, channel: discord.TextChannel = None):
+async def track(ctx, url: str, channel: discord.TextChannel = None, *, custom_message: str = None):
     """
-    Add a new Eventbrite URL to track
-    Usage: !track <url> [#channel]
+    Add a new Eventbrite URL to track with optional custom message
+    Usage: !track <url> [#channel] [custom message]
     """
     if not url.startswith('https://www.eventbrite'):
         await ctx.send("Please provide a valid Eventbrite URL")
         return
     
-    # Use mentioned channel or current channel
     target_channel = channel or ctx.channel
     
-    add_tracker(url, target_channel.id)
-    await ctx.send(f"Now tracking events from: {url} in {target_channel.mention}")
+    add_tracker(url, target_channel.id, custom_message)
+    
+    response = f"Now tracking events from: {url} in {target_channel.mention}"
+    if custom_message:
+        response += f"\nCustom message: {custom_message}"
+    await ctx.send(response)
     
     # Immediately fetch events for the new URL
     async with aiohttp.ClientSession() as session:

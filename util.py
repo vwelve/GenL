@@ -2,7 +2,7 @@ import discord
 from datetime import datetime
 
 # Replace webhook functions with Discord message function
-async def send_discord_message(channel, event_data):
+async def send_discord_message(channel, event_data, content="New event found!"):
     embed = discord.Embed(
         title=event_data['name'],
         url=event_data['url'],
@@ -21,4 +21,4 @@ async def send_discord_message(channel, event_data):
     if 'image' in event_data and event_data['image']['url']:
         embed.set_image(url=event_data['image']['url'])
     
-    await channel.send(content="New event found!", embed=embed)
+    await channel.send(content=content, embed=embed)
